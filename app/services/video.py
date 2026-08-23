@@ -1,5 +1,6 @@
 import itertools
 import io
+import json
 import os
 import random
 import gc
@@ -545,6 +546,7 @@ def combine_videos(
     max_clip_duration: int = 5,
     threads: int = 2,
     clip_speed: float = 1.0,
+    segment_manifest_path: str | None = None,
 ) -> str:
     audio_clip = AudioFileClip(audio_file)
     try:
@@ -710,6 +712,8 @@ def combine_videos(
             processed_clips.append(
                 SubClippedVideoClip(
                     file_path=clip_file,
+                    start_time=subclipped_item.start_time,
+                    end_time=subclipped_item.end_time,
                     duration=clip_duration_saved,
                     width=clip_w,
                     height=clip_h,
@@ -746,6 +750,21 @@ def combine_videos(
         return combined_video_path
     
     clip_files = [clip.file_path for clip in processed_clips]
+    if segment_manifest_path:
+        manifest = [
+            {
+                "source_path": clip.source_file_path,
+                "start_seconds": float(clip.start_time or 0),
+                "end_seconds": float(
+                    clip.end_time
+                    if clip.end_time is not None
+                    else (clip.start_time or 0) + clip.duration
+                ),
+            }
+            for clip in processed_clips
+        ]
+        with open(segment_manifest_path, mode="w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, ensure_ascii=False, indent=2)
     logger.info(f"concatenating {len(clip_files)} clips with ffmpeg")
     concat_video_clips_with_ffmpeg(
         clip_files=clip_files,

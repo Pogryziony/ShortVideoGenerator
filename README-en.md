@@ -18,6 +18,11 @@ English | [简体中文](README.md) | [日本語](README-ja.md) | [Releases](htt
 
 </div>
 
+> **Fork feature:** automated 45-second fictional YouTube Shorts with local
+> Minecraft/ASMR footage, PostgreSQL semantic deduplication, cron/n8n triggers,
+> automatic validation and private-first YouTube approval. See
+> [Story Factory setup](docs/STORY_FACTORY.md).
+
 ## Screenshots 🖥️
 
 <h4 align="center">WebUI</h4>

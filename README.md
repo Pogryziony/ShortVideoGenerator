@@ -18,6 +18,10 @@
 
 </div>
 
+> **本 Fork 新增：** 自动生成约 45 秒的虚构故事 YouTube Shorts，使用本地
+> Minecraft/ASMR 素材、PostgreSQL 语义去重、cron/n8n 调度、自动校验，以及
+> YouTube 私密上传后审批发布。配置说明见 [Story Factory](docs/STORY_FACTORY.md)。
+
 ## 界面预览 🖥️
 
 <h4 align="center">WebUI</h4>

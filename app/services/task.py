@@ -13,7 +13,7 @@ from loguru import logger
 
 from app.config import config
 from app.models import const
-from app.models.schema import VideoConcatMode, VideoParams
+from app.models.schema import MaterialInfo, VideoAspect, VideoConcatMode, VideoParams
 from app.services import bgm as bgm_service
 from app.services import (
     elevenlabs_music,
@@ -25,7 +25,10 @@ from app.services import (
     task_artifacts,
     twelvelabs,
     video,
+    video_validation,
     voice,
+    story_factory,
+    youtube_publisher,
 )
 from app.services import upload_post
 from app.services import state as sm
@@ -287,22 +290,74 @@ def _mark_task_failed(
 def generate_script(task_id, params):
     logger.info("\n\n## generating video script")
     video_script = params.video_script.strip()
-    if not video_script:
-        video_script = llm.generate_script(
-            video_subject=params.video_subject,
-            language=params.video_language,
-            paragraph_number=params.paragraph_number,
-            video_script_prompt=params.video_script_prompt,
-            custom_system_prompt=params.custom_system_prompt,
-        )
-    else:
-        logger.debug(f"video script: \n{video_script}")
+    if not getattr(params, "story_mode", False):
+        if not video_script:
+            video_script = llm.generate_script(
+                video_subject=params.video_subject,
+                language=params.video_language,
+                paragraph_number=params.paragraph_number,
+                video_script_prompt=params.video_script_prompt,
+                custom_system_prompt=params.custom_system_prompt,
+            )
+        else:
+            logger.debug(f"video script: \n{video_script}")
+        if not video_script:
+            _mark_task_failed(task_id, "script", "failed to generate video script")
+            return None
+        return video_script
 
-    if not video_script:
-        _mark_task_failed(task_id, "script", "failed to generate video script")
-        return None
+    category = story_factory.choose_category(getattr(params, "story_category", None))
+    params.story_category = category
+    max_attempts = int(config.app.get("story_generation_attempts", 5))
+    last_error = "failed to generate a valid original story"
+    for attempt in range(1, max_attempts + 1):
+        candidate = video_script
+        if not candidate:
+            candidate = llm.generate_script(
+                video_subject=params.video_subject,
+                language=params.video_language,
+                paragraph_number=1,
+                video_script_prompt=params.video_script_prompt,
+                custom_system_prompt=params.custom_system_prompt,
+                story_category=category,
+            )
+        if not candidate:
+            last_error = "LLM returned an empty story"
+        else:
+            try:
+                record = story_factory.repository.reserve_story(
+                    task_id=task_id,
+                    category=category,
+                    subject=params.video_subject,
+                    script=candidate,
+                )
+                sm.state.patch_task(
+                    task_id,
+                    story_category=record.category,
+                    story_hook=record.hook,
+                    story_word_count=record.word_count,
+                    story_max_similarity=record.max_similarity,
+                )
+                return candidate
+            except (
+                story_factory.DuplicateStoryError,
+                story_factory.StoryLengthError,
+            ) as exc:
+                last_error = str(exc)
+                logger.warning(
+                    f"reject story candidate, task_id={task_id}, "
+                    f"attempt={attempt}/{max_attempts}, error={exc}"
+                )
+            except story_factory.StoryFactoryError as exc:
+                _mark_task_failed(task_id, "story_storage", str(exc))
+                return None
 
-    return video_script
+        # A caller-supplied script cannot be regenerated without changing user input.
+        if video_script:
+            break
+
+    _mark_task_failed(task_id, "story_validation", last_error)
+    return None
 
 
 def generate_terms(task_id, params, video_script):
@@ -345,6 +400,26 @@ def generate_terms(task_id, params, video_script):
         )
 
     return video_terms
+
+
+def _discover_local_story_materials() -> list[MaterialInfo]:
+    """Return locally stored Minecraft/ASMR footage without exposing host paths."""
+    local_dir = utils.storage_dir("local_videos", create=True)
+    supported = {
+        ".mp4",
+        ".mov",
+        ".mkv",
+        ".webm",
+        ".avi",
+        ".m4v",
+    }
+    files = [
+        name
+        for name in os.listdir(local_dir)
+        if path.isfile(path.join(local_dir, name))
+        and path.splitext(name)[1].lower() in supported
+    ]
+    return [MaterialInfo(provider="local", url=name) for name in sorted(files)]
 
 
 def save_script_data(task_id, video_script, video_terms, params):
@@ -791,6 +866,9 @@ def generate_final_videos(
             utils.task_dir(task_id), f"combined-{index}.mp4"
         )
         logger.info(f"\n\n## combining video: {index} => {combined_video_path}")
+        segment_manifest_path = path.join(
+            utils.task_dir(task_id), f"footage-segments-{index}.json"
+        )
         video.combine_videos(
             combined_video_path=combined_video_path,
             video_paths=downloaded_videos,
@@ -801,6 +879,7 @@ def generate_final_videos(
             max_clip_duration=params.video_clip_duration,
             threads=params.n_threads,
             clip_speed=params.video_clip_speed,
+            segment_manifest_path=segment_manifest_path,
         )
 
         _progress += 50 / params.video_count / 2
@@ -1221,6 +1300,14 @@ def _run_pipeline(
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
 
+    if getattr(params, "story_mode", False):
+        # Story-factory runs are deliberately opinionated: vertical output and
+        # locally licensed Minecraft/ASMR footage only.
+        params.video_aspect = VideoAspect.portrait
+        params.video_source = "local"
+        if not params.video_materials:
+            params.video_materials = _discover_local_story_materials()
+
     # 只有完整成片流程需要视频配乐供应商。尽早阻止缺少 Key 的完整任务，避免
     # 先消耗 LLM、TTS 和素材服务额度；中间产物接口仍可独立使用。
     video_music_provider = _VIDEO_MUSIC_PROVIDERS.get(params.bgm_type)
@@ -1326,6 +1413,17 @@ def _run_pipeline(
             "failed to prepare narration audio",
         )
 
+    if getattr(params, "story_mode", False):
+        target = float(getattr(params, "target_narration_seconds", 45))
+        tolerance = float(getattr(params, "narration_tolerance_seconds", 6))
+        if abs(float(audio_duration) - target) > tolerance:
+            return _mark_task_failed(
+                task_id,
+                "narration_validation",
+                f"narration duration must be {target:.0f}±{tolerance:.0f} seconds; "
+                f"received {float(audio_duration):.1f} seconds",
+            )
+
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=30)
 
     if stop_at == "audio":
@@ -1407,10 +1505,69 @@ def _run_pipeline(
         f"task {task_id} finished, generated {len(final_video_paths)} videos."
     )
 
+    validation_report = None
+    youtube_video_ids = None
+    approval_state = None
+    if getattr(params, "story_mode", False):
+        try:
+            validation_report = video_validation.validate_story_videos(
+                final_video_paths,
+                target_seconds=float(params.target_narration_seconds),
+                tolerance_seconds=float(params.narration_tolerance_seconds),
+            )
+            segment_manifests = [
+                path.join(utils.task_dir(task_id), f"footage-segments-{index}.json")
+                for index in range(1, len(final_video_paths) + 1)
+            ]
+            story_factory.repository.save_render_result(
+                task_id,
+                validation_report=validation_report,
+                segment_manifests=segment_manifests,
+            )
+        except (
+            video_validation.VideoValidationError,
+            story_factory.StoryFactoryError,
+            OSError,
+            ValueError,
+        ) as exc:
+            story_factory.repository.update_status(task_id, "validation_failed")
+            return _mark_task_failed(task_id, "automatic_validation", str(exc))
+
+        if youtube_publisher.is_configured():
+            try:
+                youtube_video_ids = youtube_publisher.upload_private(
+                    final_video_paths,
+                    title=(story_factory.extract_hook(video_script)[:88] + " #Shorts"),
+                    description=(
+                        "Original fictional short story. "
+                        "This video contains AI-generated narration."
+                    ),
+                )
+                approval_state = "pending_manual_approval"
+                story_factory.repository.update_status(
+                    task_id, "uploaded_private", youtube_video_ids
+                )
+                if params.auto_publish_after_validation:
+                    youtube_publisher.publish(youtube_video_ids)
+                    approval_state = "published"
+                    story_factory.repository.update_status(task_id, "published")
+            except youtube_publisher.YouTubePublisherError as exc:
+                story_factory.repository.update_status(task_id, "upload_failed")
+                return _mark_task_failed(task_id, "youtube_private_upload", str(exc))
+        elif bool(config.app.get("youtube_publish_required", False)):
+            return _mark_task_failed(
+                task_id,
+                "youtube_private_upload",
+                "YouTube OAuth is not configured; run scripts/youtube_authorize.py",
+            )
+        else:
+            approval_state = "validated_not_uploaded"
+
     # 7. 先完成视频生成任务，再按需提交跨平台发布。第三方上传可能耗时
     # 数分钟，不应阻塞视频结果返回，也不能反向影响已经生成的成片。
     cross_post_enabled = (
-        upload_post.upload_post_service.is_configured()
+        not getattr(params, "story_mode", False)
+        and upload_post.upload_post_service.is_configured()
         and upload_post.upload_post_service.auto_upload
     )
     platforms = (
@@ -1437,6 +1594,9 @@ def _run_pipeline(
         "cross_post_error": None,
         "cross_post_owner": _cross_post_process_owner if should_cross_post else None,
         "warnings": generation_warnings or None,
+        "validation_report": validation_report,
+        "youtube_video_ids": youtube_video_ids,
+        "approval_state": approval_state,
     }
     sm.state.update_task(
         task_id, state=const.TASK_STATE_COMPLETE, progress=100, **kwargs
@@ -1495,6 +1655,39 @@ def start(
             "pipeline",
             f"{type(exc).__name__}: {exc}",
         )
+
+
+def approve_and_publish(task_id: str) -> dict:
+    """Publish videos that were already uploaded to YouTube as private."""
+    current = sm.state.get_task(task_id)
+    if not current:
+        raise ValueError("task not found")
+    if current.get("approval_state") != "pending_manual_approval":
+        raise ValueError("task is not awaiting manual approval")
+    video_ids = list(current.get("youtube_video_ids") or [])
+    if not video_ids:
+        raise ValueError("task has no private YouTube upload")
+    sm.state.patch_task(task_id, approval_state="publishing")
+    try:
+        youtube_publisher.publish(video_ids)
+        story_factory.repository.update_status(task_id, "published")
+        sm.state.patch_task(task_id, approval_state="published")
+    except Exception:
+        sm.state.patch_task(task_id, approval_state="publish_failed")
+        raise
+    return sm.state.get_task(task_id)
+
+
+def reject_publication(task_id: str) -> dict:
+    """Keep a private upload private and close its approval request."""
+    current = sm.state.get_task(task_id)
+    if not current:
+        raise ValueError("task not found")
+    if current.get("approval_state") != "pending_manual_approval":
+        raise ValueError("task is not awaiting manual approval")
+    story_factory.repository.update_status(task_id, "rejected")
+    sm.state.patch_task(task_id, approval_state="rejected")
+    return sm.state.get_task(task_id)
 
 
 if __name__ == "__main__":

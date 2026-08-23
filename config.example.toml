@@ -68,7 +68,25 @@ tls_verify = true
 # instead of searching stock footage; generation is billed per request.
 # "loomloom" is a paid Shengsuan Cloud source and requires explicit
 # confirmation in the WebUI before each generation request.
-video_source = "pexels"
+video_source = "local"
+
+# Automated 45-second fictional-story pipeline. PostgreSQL is mandatory in the
+# Docker profile and provides script, hook, semantic embedding and footage audit
+# storage. For direct local development, set database_url explicitly.
+database_url = ""
+story_database_required = false
+story_generation_attempts = 5
+story_similarity_threshold = 0.88
+story_similarity_history_limit = 500
+story_embedding_model = "text-embedding-3-small"
+story_embedding_api_key = ""
+story_embedding_base_url = ""
+
+# Direct YouTube publishing always uploads as private first. Generate the token
+# with scripts/youtube_authorize.py. Set youtube_publish_required=true in
+# production so an unconfigured channel fails instead of silently stopping.
+youtube_token_file = "storage/youtube-token.json"
+youtube_publish_required = false
 
 # API key lists support key rotation. Use straight ASCII double quotes and
 # separate multiple keys with commas, for example: ["key-1", "key-2"].

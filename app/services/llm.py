@@ -10,6 +10,7 @@ from openai.types.chat import ChatCompletion
 
 from app.config import config
 from app.models.llm_provider import DEFAULT_LLM_PROVIDER_ID, get_llm_provider
+from app.services.story_factory import FICTIONAL_STORY_SYSTEM_PROMPT
 
 _max_retries = 5
 MIN_SCRIPT_PARAGRAPH_NUMBER = 1
@@ -26,22 +27,7 @@ _SENSITIVE_QUERY_RE = re.compile(
     re.IGNORECASE,
 )
 
-DEFAULT_SCRIPT_SYSTEM_PROMPT = """
-# Role: Video Script Generator
-
-## Goals:
-Generate a script for a video, depending on the subject of the video.
-
-## Constrains:
-1. the script is to be returned as a string with the specified number of paragraphs.
-2. do not under any circumstance reference this prompt in your response.
-3. get straight to the point, don't start with unnecessary things like, "welcome to this video".
-4. you must not include any type of markdown or formatting in the script, never use a title.
-5. only return the raw content of the script.
-6. do not include "voiceover", "narrator" or similar indicators of what should be spoken at the beginning of each paragraph or line.
-7. you must not mention the prompt, or anything about the script itself. also, never talk about the amount of paragraphs or lines. just write the script.
-8. respond in the same language as the video subject.
-""".strip()
+DEFAULT_SCRIPT_SYSTEM_PROMPT = FICTIONAL_STORY_SYSTEM_PROMPT
 
 
 def _normalize_text_response(content, llm_provider: str) -> str:
@@ -470,6 +456,7 @@ def build_script_prompt(
     paragraph_number: int = 1,
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
+    story_category: str = "",
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
     video_script_prompt = _limit_script_text(
@@ -488,6 +475,8 @@ def build_script_prompt(
 - video subject: {video_subject}
 - number of paragraphs: {paragraph_number}
 """.rstrip()
+    if story_category:
+        prompt += f"\n- fictional story category: {story_category}"
     if language:
         prompt += f"\n- language: {language}"
     if video_script_prompt:
@@ -506,6 +495,7 @@ def generate_script(
     paragraph_number: int = 1,
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
+    story_category: str = "",
     app_config=None,
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
@@ -521,6 +511,7 @@ def generate_script(
         paragraph_number=paragraph_number,
         video_script_prompt=video_script_prompt,
         custom_system_prompt=custom_system_prompt,
+        story_category=story_category,
     )
     final_script = ""
     logger.info(

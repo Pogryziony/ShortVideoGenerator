@@ -128,6 +128,13 @@ class VideoParams(BaseModel):
     video_script_prompt: str = Field(default="", max_length=2000)
     custom_system_prompt: str = Field(default="", max_length=8000)
 
+    # Automated fictional-story mode. A category is selected per run when omitted.
+    story_mode: bool = False
+    story_category: Optional[str] = Field(default=None, max_length=120)
+    target_narration_seconds: int = Field(default=45, ge=30, le=60)
+    narration_tolerance_seconds: int = Field(default=6, ge=1, le=15)
+    auto_publish_after_validation: bool = False
+
 
 class SubtitleRequest(BaseModel):
     video_script: str

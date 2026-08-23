@@ -83,7 +83,9 @@ class TestScriptPromptOptions(unittest.TestCase):
             video_script_prompt="语气轻松，面向程序员",
         )
 
-        self.assertIn("# Role: Video Script Generator", prompt)
+        self.assertIn("# Role: Viral Fictional Short-Story Writer", prompt)
+        self.assertIn("100–115 spoken words", prompt)
+        self.assertIn("roughly 45 seconds", prompt)
         self.assertIn("- video subject: 咖啡", prompt)
         self.assertIn("- number of paragraphs: 3", prompt)
         self.assertIn("- language: zh-CN", prompt)

@@ -281,6 +281,51 @@ def get_task(
     )
 
 
+@router.post(
+    "/tasks/{task_id}/approve",
+    response_model=TaskQueryResponse,
+    summary="Approve a private YouTube short for publication",
+)
+def approve_story_publication(
+    request: Request, task_id: str = Path(..., description="Task ID")
+):
+    request_id = base.get_task_id(request)
+    try:
+        task = tm.approve_and_publish(task_id)
+        return utils.get_response(200, _public_task_data(task))
+    except ValueError as exc:
+        raise HttpException(
+            task_id=task_id, status_code=409, message=f"{request_id}: {exc}"
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            f"YouTube publication failed, request_id={request_id}, task_id={task_id}"
+        )
+        raise HttpException(
+            task_id=task_id,
+            status_code=502,
+            message=f"{request_id}: YouTube publication failed",
+        ) from exc
+
+
+@router.post(
+    "/tasks/{task_id}/reject",
+    response_model=TaskQueryResponse,
+    summary="Reject publication and keep a YouTube short private",
+)
+def reject_story_publication(
+    request: Request, task_id: str = Path(..., description="Task ID")
+):
+    request_id = base.get_task_id(request)
+    try:
+        task = tm.reject_publication(task_id)
+        return utils.get_response(200, _public_task_data(task))
+    except ValueError as exc:
+        raise HttpException(
+            task_id=task_id, status_code=409, message=f"{request_id}: {exc}"
+        ) from exc
+
+
 @router.delete(
     "/tasks/{task_id}",
     response_model=TaskDeletionResponse,

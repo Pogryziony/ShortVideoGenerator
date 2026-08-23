@@ -1,0 +1,45 @@
+{
+  "name": "Short Video Story Factory",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 24}]
+        }
+      },
+      "id": "schedule",
+      "name": "Every 24 hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SHORT_VIDEO_API_URL || 'http://api:8080/api/v1/videos'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "x-api-key", "value": "={{$env.MPT_API_KEY}}"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"video_subject\":\"Invent a completely original high-retention fictional story\",\"video_language\":\"English\",\"story_mode\":true,\"video_source\":\"local\",\"video_aspect\":\"9:16\",\"target_narration_seconds\":45,\"narration_tolerance_seconds\":6,\"auto_publish_after_validation\":false,\"video_count\":1}"
+      },
+      "id": "submit",
+      "name": "Generate private short",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Every 24 hours": {
+      "main": [[{"node": "Generate private short", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "8ed99ee1-2ae8-40b3-a42f-4cc265b9299a"
+}

@@ -1,0 +1,3 @@
+# Submit one story every day at 18:00. Install with `crontab deploy/cron/short-video-generator`
+# after replacing /opt/ShortVideoGenerator with the absolute checkout path.
+0 18 * * * cd /opt/ShortVideoGenerator && /usr/bin/flock -n /tmp/short-video-generator.lock /usr/bin/env uv run python scripts/story_runner.py >> storage/story-cron.log 2>&1

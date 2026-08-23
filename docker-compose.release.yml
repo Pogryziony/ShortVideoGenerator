@@ -3,19 +3,52 @@ x-common-volumes: &common-volumes
   - ./storage:/MoneyPrinterTurbo/storage
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: "short-video-postgres"
+    environment:
+      POSTGRES_DB: short_video_generator
+      POSTGRES_USER: short_video_generator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - short-video-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U short_video_generator -d short_video_generator"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
   webui:
-    image: ghcr.io/harry0703/moneyprinterturbo:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: "moneyprinterturbo-webui"
     ports:
       - "127.0.0.1:8501:8501"
     command: [ "streamlit", "run", "./webui/Main.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False" ]
     volumes: *common-volumes
+    environment:
+      MPT_APP_DATABASE_URL: postgresql://short_video_generator:${POSTGRES_PASSWORD}@postgres:5432/short_video_generator
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: always
   api:
-    image: ghcr.io/harry0703/moneyprinterturbo:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: "moneyprinterturbo-api"
     ports:
       - "127.0.0.1:8080:8080"
     command: [ "python3", "main.py" ]
     volumes: *common-volumes
+    environment:
+      MPT_APP_DATABASE_URL: postgresql://short_video_generator:${POSTGRES_PASSWORD}@postgres:5432/short_video_generator
+      YOUTUBE_TOKEN_FILE: /MoneyPrinterTurbo/storage/youtube-token.json
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: always
+
+volumes:
+  short-video-postgres:
